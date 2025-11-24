@@ -29,9 +29,45 @@ variable "subnet_address_prefix" {
 }
 
 variable "vm_count" {
-  description = "Number of VMs to create"
+  description = "Initial number of VMs (deprecated - use autoscaling min/max instead)"
   type        = number
   default     = 2
+}
+
+variable "autoscale_min_instances" {
+  description = "Minimum number of VM instances in the scale set"
+  type        = number
+  default     = 2
+}
+
+variable "autoscale_max_instances" {
+  description = "Maximum number of VM instances in the scale set"
+  type        = number
+  default     = 10
+}
+
+variable "autoscale_default_instances" {
+  description = "Default number of VM instances in the scale set"
+  type        = number
+  default     = 2
+}
+
+variable "autoscale_enabled" {
+  description = "Enable autoscaling for the VM scale set"
+  type        = bool
+  default     = true
+}
+
+variable "autoscale_scale_out_cpu_threshold" {
+  description = "CPU percentage threshold to trigger scale out"
+  type        = number
+  default     = 75
+}
+
+variable "autoscale_scale_in_cpu_threshold" {
+  description = "CPU percentage threshold to trigger scale in"
+  type        = number
+  default     = 25
 }
 
 variable "vm_size" {

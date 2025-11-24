@@ -7,8 +7,16 @@ prefix              = "iis"
 vnet_address_space     = "10.0.0.0/16"
 subnet_address_prefix  = "10.0.1.0/24"
 
-vm_count = 2
+vm_count = 2  # Deprecated - use autoscaling variables instead
 vm_size  = "Standard_DS2_v2"
+
+# Autoscaling Configuration
+autoscale_enabled              = true
+autoscale_min_instances        = 2
+autoscale_max_instances        = 10
+autoscale_default_instances    = 2
+autoscale_scale_out_cpu_threshold = 75  # Scale out when CPU > 75%
+autoscale_scale_in_cpu_threshold  = 25  # Scale in when CPU < 25%
 
 # Windows Server SKU options:
 # - 2022-Datacenter

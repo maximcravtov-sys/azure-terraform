@@ -180,61 +180,15 @@ resource "azurerm_lb_rule" "https" {
   load_distribution              = "Default"
 }
 
-# Network Interface for each VM
-resource "azurerm_network_interface" "vm" {
-  count               = var.vm_count
-  name                = "${var.prefix}-nic-${count.index + 1}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = azurerm_subnet.main.id
-    private_ip_address_allocation = "Dynamic"
-  }
-
-  tags = var.tags
-}
-
-# Associate Network Interfaces with Backend Pool
-resource "azurerm_network_interface_backend_address_pool_association" "vm" {
-  count                   = var.vm_count
-  network_interface_id    = azurerm_network_interface.vm[count.index].id
-  ip_configuration_name   = "internal"
-  backend_address_pool_id = azurerm_lb_backend_address_pool.main.id
-}
-
-# Availability Set for VMs
-resource "azurerm_availability_set" "main" {
-  name                = "${var.prefix}-avset"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  platform_fault_domain_count  = 2
-  platform_update_domain_count = 2
-
-  tags = var.tags
-}
-
-# Windows VMs
-resource "azurerm_windows_virtual_machine" "main" {
-  count               = var.vm_count
-  name                = "${var.prefix}-vm-${count.index + 1}"
+# Virtual Machine Scale Set
+resource "azurerm_windows_virtual_machine_scale_set" "main" {
+  name                = "${var.prefix}-vmss"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
-  size                = var.vm_size
+  sku                 = var.vm_size
+  instances           = var.autoscale_default_instances
   admin_username      = var.admin_username
   admin_password      = var.admin_password
-  availability_set_id = azurerm_availability_set.main.id
-
-  network_interface_ids = [
-    azurerm_network_interface.vm[count.index].id
-  ]
-
-  os_disk {
-    name                 = "${var.prefix}-osdisk-${count.index + 1}"
-    caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
-  }
 
   source_image_reference {
     publisher = "MicrosoftWindowsServer"
@@ -243,25 +197,125 @@ resource "azurerm_windows_virtual_machine" "main" {
     version   = "latest"
   }
 
-  tags = merge(var.tags, {
-    Name = "${var.prefix}-vm-${count.index + 1}"
-  })
+  os_disk {
+    storage_account_type = "Premium_LRS"
+    caching              = "ReadWrite"
+  }
+
+  network_interface {
+    name    = "${var.prefix}-vmss-nic"
+    primary = true
+
+    ip_configuration {
+      name                                   = "internal"
+      primary                                = true
+      subnet_id                              = azurerm_subnet.main.id
+      load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.main.id]
+    }
+  }
+
+  # Enable automatic OS upgrades
+  upgrade_mode = "Automatic"
+
+  # Health extension for better load balancer integration
+  extension {
+    name                       = "HealthExtension"
+    publisher                  = "Microsoft.ManagedServices"
+    type                       = "ApplicationHealthWindows"
+    type_handler_version       = "1.0"
+    auto_upgrade_minor_version = true
+
+    settings = jsonencode({
+      protocol    = "http"
+      port        = 80
+      requestPath = "/"
+    })
+  }
+
+  # IIS Installation Extension
+  extension {
+    name                       = "${var.prefix}-iis"
+    publisher                  = "Microsoft.Compute"
+    type                       = "CustomScriptExtension"
+    type_handler_version       = "1.10"
+    auto_upgrade_minor_version = true
+
+    settings = jsonencode({
+      commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"Install-WindowsFeature -Name Web-Server -IncludeManagementTools; Install-WindowsFeature -Name Web-Mgmt-Console; Install-WindowsFeature -Name Web-Asp-Net45; Install-WindowsFeature -Name Web-Net-Ext45; Install-WindowsFeature -Name Web-ISAPI-Ext; Install-WindowsFeature -Name Web-ISAPI-Filter; $hostname = hostname; New-Item -Path 'C:\\inetpub\\wwwroot\\default.html' -ItemType File -Force -Value ('<html><body><h1>IIS is running on ' + $hostname + '</h1></body></html>')\""
+    })
+  }
+
+  tags = var.tags
 }
 
-# IIS Installation Extension
-resource "azurerm_virtual_machine_extension" "iis" {
-  count                = var.vm_count
-  name                 = "${var.prefix}-iis-${count.index + 1}"
-  virtual_machine_id   = azurerm_windows_virtual_machine.main[count.index].id
-  publisher            = "Microsoft.Compute"
-  type                 = "CustomScriptExtension"
-  type_handler_version = "1.10"
+# Autoscaling Settings
+resource "azurerm_monitor_autoscale_setting" "vmss" {
+  count               = var.autoscale_enabled ? 1 : 0
+  name                = "${var.prefix}-vmss-autoscale"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  target_resource_id  = azurerm_windows_virtual_machine_scale_set.main.id
+  enabled             = true
 
-  settings = <<SETTINGS
-    {
-      "commandToExecute": "powershell -ExecutionPolicy Unrestricted -Command \"Install-WindowsFeature -Name Web-Server -IncludeManagementTools; Install-WindowsFeature -Name Web-Mgmt-Console; Install-WindowsFeature -Name Web-Asp-Net45; Install-WindowsFeature -Name Web-Net-Ext45; Install-WindowsFeature -Name Web-ISAPI-Ext; Install-WindowsFeature -Name Web-ISAPI-Filter; New-Item -Path 'C:\\inetpub\\wwwroot\\default.html' -ItemType File -Force -Value '<html><body><h1>IIS is running on ${var.prefix}-vm-${count.index + 1}</h1></body></html>'\""
+  profile {
+    name = "default"
+
+    capacity {
+      default = var.autoscale_default_instances
+      minimum = var.autoscale_min_instances
+      maximum = var.autoscale_max_instances
     }
-SETTINGS
+
+    # Scale Out Rule - Increase instances when CPU is high
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_windows_virtual_machine_scale_set.main.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "GreaterThan"
+        threshold          = var.autoscale_scale_out_cpu_threshold
+      }
+
+      scale_action {
+        direction = "Increase"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT5M"
+      }
+    }
+
+    # Scale In Rule - Decrease instances when CPU is low
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = azurerm_windows_virtual_machine_scale_set.main.id
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "LessThan"
+        threshold          = var.autoscale_scale_in_cpu_threshold
+      }
+
+      scale_action {
+        direction = "Decrease"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT5M"
+      }
+    }
+  }
+
+  notification {
+    email {
+      send_to_subscription_administrator    = false
+      send_to_subscription_co_administrators = false
+      custom_emails                         = []
+    }
+  }
 
   tags = var.tags
 }

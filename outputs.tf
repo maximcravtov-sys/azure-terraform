@@ -13,14 +13,34 @@ output "load_balancer_id" {
   value       = azurerm_lb.main.id
 }
 
-output "vm_private_ips" {
-  description = "Private IP addresses of the VMs"
-  value       = azurerm_network_interface.vm[*].private_ip_address
+output "vmss_id" {
+  description = "ID of the Virtual Machine Scale Set"
+  value       = azurerm_windows_virtual_machine_scale_set.main.id
 }
 
-output "vm_names" {
-  description = "Names of the VMs"
-  value       = azurerm_windows_virtual_machine.main[*].name
+output "vmss_name" {
+  description = "Name of the Virtual Machine Scale Set"
+  value       = azurerm_windows_virtual_machine_scale_set.main.name
+}
+
+output "vmss_instance_count" {
+  description = "Current number of instances in the VM Scale Set"
+  value       = azurerm_windows_virtual_machine_scale_set.main.instances
+}
+
+output "autoscaling_enabled" {
+  description = "Whether autoscaling is enabled"
+  value       = var.autoscale_enabled
+}
+
+output "autoscaling_min_instances" {
+  description = "Minimum number of VM instances"
+  value       = var.autoscale_min_instances
+}
+
+output "autoscaling_max_instances" {
+  description = "Maximum number of VM instances"
+  value       = var.autoscale_max_instances
 }
 
 output "sql_server_fqdn" {
@@ -45,14 +65,13 @@ output "web_app_url" {
 }
 
 output "rdp_connection_info" {
-  description = "RDP connection information for VMs"
+  description = "RDP connection information for VM Scale Set"
   value = {
-    for idx, vm in azurerm_windows_virtual_machine.main : vm.name => {
-      public_ip    = azurerm_public_ip.lb.ip_address
-      private_ip   = azurerm_network_interface.vm[idx].private_ip_address
-      username     = var.admin_username
-      note         = "Use Azure Bastion or VPN to connect via RDP"
-    }
+    vmss_name    = azurerm_windows_virtual_machine_scale_set.main.name
+    public_ip    = azurerm_public_ip.lb.ip_address
+    username     = var.admin_username
+    note         = "Use Azure Bastion or VPN to connect via RDP. Connect to individual instances through the load balancer."
+    autoscaling  = var.autoscale_enabled ? "Enabled (${var.autoscale_min_instances}-${var.autoscale_max_instances} instances)" : "Disabled"
   }
 }
 
