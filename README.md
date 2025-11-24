@@ -246,7 +246,3 @@ terraform destroy
 - Configure auto-scaling for VMs
 - Set up Azure DevOps CI/CD pipelines
 - Implement Azure Key Vault for secrets management
-
-## License
-
-This Terraform configuration is provided as-is for educational and development purposes.
