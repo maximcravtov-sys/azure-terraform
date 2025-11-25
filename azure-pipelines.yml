@@ -1,0 +1,185 @@
+# Azure DevOps Pipeline for Terraform Infrastructure
+# This pipeline validates, plans, and applies Terraform configurations
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - '*.tf'
+      - '*.tfvars'
+      - 'azure-pipelines.yml'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - '*.tf'
+      - '*.tfvars'
+
+variables:
+  - group: terraform-variables  # Variable group in Azure DevOps
+  - name: terraformVersion
+    value: '1.6.0'
+  - name: workingDirectory
+    value: '$(System.DefaultWorkingDirectory)'
+
+stages:
+  - stage: Validate
+    displayName: 'Validate Terraform'
+    jobs:
+      - job: TerraformValidate
+        displayName: 'Terraform Validate'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: '$(azureServiceConnection)'
+              backendAzureRmResourceGroupName: '$(terraformBackendResourceGroup)'
+              backendAzureRmStorageAccountName: '$(terraformBackendStorageAccount)'
+              backendAzureRmContainerName: '$(terraformBackendContainer)'
+              backendAzureRmKey: 'terraform.tfstate'
+              workingDirectory: '$(workingDirectory)'
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Validate'
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+              workingDirectory: '$(workingDirectory)'
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Format Check'
+            inputs:
+              provider: 'azurerm'
+              command: 'custom'
+              customCommand: 'fmt -check -recursive'
+              workingDirectory: '$(workingDirectory)'
+
+  - stage: Plan
+    displayName: 'Terraform Plan'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: TerraformPlan
+        displayName: 'Terraform Plan'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: '$(azureServiceConnection)'
+              backendAzureRmResourceGroupName: '$(terraformBackendResourceGroup)'
+              backendAzureRmStorageAccountName: '$(terraformBackendStorageAccount)'
+              backendAzureRmContainerName: '$(terraformBackendContainer)'
+              backendAzureRmKey: 'terraform.tfstate'
+              workingDirectory: '$(workingDirectory)'
+
+          - task: AzureKeyVault@2
+            displayName: 'Get Secrets from Key Vault'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              KeyVaultName: '$(keyVaultName)'
+              SecretsFilter: 'vm-admin-password,sql-admin-password,vm-admin-username,sql-admin-username'
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Plan'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              commandOptions: '-out=tfplan'
+              environmentServiceNameAzureRM: '$(azureServiceConnection)'
+              workingDirectory: '$(workingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Terraform Plan'
+            inputs:
+              pathToPublish: '$(workingDirectory)/tfplan'
+              artifactName: 'terraform-plan'
+              publishLocation: 'Container'
+
+  - stage: Apply
+    displayName: 'Terraform Apply'
+    dependsOn: Plan
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: TerraformApply
+        displayName: 'Terraform Apply'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@0
+                  displayName: 'Install Terraform'
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Terraform Init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    backendServiceArm: '$(azureServiceConnection)'
+                    backendAzureRmResourceGroupName: '$(terraformBackendResourceGroup)'
+                    backendAzureRmStorageAccountName: '$(terraformBackendStorageAccount)'
+                    backendAzureRmContainerName: '$(terraformBackendContainer)'
+                    backendAzureRmKey: 'terraform.tfstate'
+                    workingDirectory: '$(workingDirectory)'
+
+                - task: DownloadBuildArtifacts@0
+                  displayName: 'Download Terraform Plan'
+                  inputs:
+                    buildType: 'current'
+                    downloadType: 'specific'
+                    itemPattern: 'terraform-plan/tfplan'
+                    downloadPath: '$(workingDirectory)'
+
+                - task: AzureKeyVault@2
+                  displayName: 'Get Secrets from Key Vault'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    KeyVaultName: '$(keyVaultName)'
+                    SecretsFilter: 'vm-admin-password,sql-admin-password,vm-admin-username,sql-admin-username'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Terraform Apply'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    commandOptions: '-auto-approve tfplan'
+                    environmentServiceNameAzureRM: '$(azureServiceConnection)'
+                    workingDirectory: '$(workingDirectory)'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Terraform Output'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'output'
+                    environmentServiceNameAzureRM: '$(azureServiceConnection)'
+                    workingDirectory: '$(workingDirectory)'
+

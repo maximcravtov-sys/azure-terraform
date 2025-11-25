@@ -1,11 +1,13 @@
 # Azure IIS Web Servers with Azure SQL Database and Load Balancer - Terraform
 
 This Terraform project provisions a highly available web infrastructure on Azure with:
-- Multiple Windows VMs running IIS (Internet Information Services)
-- Azure SQL Database (cloud-managed SQL)
-- Azure Load Balancer in front of the VMs for web traffic
-- Network security group with appropriate rules
-- Availability Set for high availability
+- **Virtual Machine Scale Set** with Windows VMs running IIS (Internet Information Services)
+- **Autoscaling** based on CPU metrics (configurable min/max instances)
+- **Azure SQL Database** (cloud-managed SQL)
+- **Azure Load Balancer** in front of the VMs for web traffic
+- **Azure Key Vault** for secure secrets management
+- **Network security group** with appropriate rules
+- **High availability** through VM Scale Set distribution
 
 ## Architecture
 
@@ -15,13 +17,18 @@ Internet
    v
 [Load Balancer] (Public IP)
    |
-   +---> [VM 1] (IIS Web Server)
-   |         |
-   |         +---> [Azure SQL Database]
+   v
+[VM Scale Set] (Auto-scaling: 2-10 instances)
    |
-   +---> [VM 2] (IIS Web Server)
-           |
-           +---> [Azure SQL Database]
+   +---> [VM Instance 1] (IIS Web Server)
+   +---> [VM Instance 2] (IIS Web Server)
+   +---> [VM Instance N] (IIS Web Server)
+   |
+   v
+[Azure SQL Database]
+   |
+   v
+[Azure Key Vault] (Secrets Management)
 ```
 
 ## Prerequisites
@@ -50,7 +57,9 @@ Internet
 3. **Edit `terraform.tfvars`** with your values:
    - Set `admin_username` and `admin_password` for VMs
    - Set `sql_admin_username` and `sql_admin_password` for Azure SQL Database
-   - Adjust `location`, `vm_count`, `vm_size` as needed
+   - Adjust `location`, `vm_size` as needed
+   - Configure autoscaling settings (min/max instances, CPU thresholds)
+   - Configure Key Vault settings
    - Configure SQL Database SKU and settings
 
 4. **Initialize Terraform**
@@ -84,11 +93,19 @@ Internet
 | `prefix` | Prefix for resource names | `iis` |
 | `vnet_address_space` | VNet address space | `10.0.0.0/16` |
 | `subnet_address_prefix` | Subnet address prefix | `10.0.1.0/24` |
-| `vm_count` | Number of VMs | `2` |
 | `vm_size` | VM size | `Standard_DS2_v2` |
 | `windows_server_sku` | Windows Server SKU | `2022-Datacenter` |
 | `admin_username` | VM admin username | *required* |
 | `admin_password` | VM admin password | *required* |
+| `autoscale_enabled` | Enable autoscaling | `true` |
+| `autoscale_min_instances` | Minimum VM instances | `2` |
+| `autoscale_max_instances` | Maximum VM instances | `10` |
+| `autoscale_default_instances` | Default VM instances | `2` |
+| `autoscale_scale_out_cpu_threshold` | CPU % to scale out | `75` |
+| `autoscale_scale_in_cpu_threshold` | CPU % to scale in | `25` |
+| `use_key_vault` | Use Key Vault for secrets | `true` |
+| `key_vault_sku` | Key Vault SKU | `standard` |
+| `key_vault_purge_protection` | Enable purge protection | `false` |
 | `sql_admin_username` | Azure SQL admin username | *required* |
 | `sql_admin_password` | Azure SQL admin password | *required* |
 | `sql_database_name` | Azure SQL Database name | `appdb` |
@@ -177,12 +194,16 @@ The Network Security Group allows:
 - Use Azure Private Link for SQL Database connectivity
 - Implement Azure Application Gateway with WAF for additional security
 
-## High Availability
+## High Availability and Autoscaling
 
-- VMs are placed in an Availability Set (2 fault domains, 2 update domains)
-- Load Balancer distributes HTTP/HTTPS traffic across healthy VMs
-- Health probe monitors HTTP port 80
-- Azure SQL Database provides built-in high availability (depending on SKU)
+- **VM Scale Set** automatically distributes VMs across fault and update domains
+- **Autoscaling** automatically adds/removes VM instances based on CPU utilization:
+  - Scales out when average CPU > 75% for 5 minutes
+  - Scales in when average CPU < 25% for 5 minutes
+  - Configurable min/max instances and thresholds
+- **Load Balancer** distributes HTTP/HTTPS traffic across healthy VMs
+- **Health probe** monitors HTTP port 80
+- **Azure SQL Database** provides built-in high availability (depending on SKU)
 
 ## IIS Features Installed
 
@@ -235,6 +256,58 @@ terraform destroy
 - Review Load Balancer rules configuration
 - Ensure IIS default page is accessible on port 80
 
+## Azure Key Vault Integration
+
+This project includes Azure Key Vault for secure secrets management:
+
+- **Secrets stored in Key Vault**:
+  - VM admin password
+  - SQL admin password
+  - VM admin username (reference)
+  - SQL admin username (reference)
+
+- **Access Control**:
+  - Network ACLs restrict access to VNet (configurable)
+  - Access policies control who can read/write secrets
+  - Soft delete enabled (7 days retention)
+  - Optional purge protection for production
+
+- **Usage**:
+  - Secrets are automatically stored during Terraform apply
+  - Resources reference Key Vault secrets when `use_key_vault = true`
+  - CI/CD pipelines can retrieve secrets from Key Vault
+
+## Azure DevOps CI/CD
+
+This project includes Azure DevOps pipeline configurations:
+
+### Pipeline Files
+
+- **`azure-pipelines.yml`**: Main CI/CD pipeline for infrastructure deployment
+- **`azure-pipelines-pr.yml`**: Pull request validation pipeline
+
+### Setup Instructions
+
+See [`.azure-pipelines/README.md`](.azure-pipelines/README.md) for detailed setup instructions.
+
+### Quick Setup
+
+1. **Create Azure Service Connection** in Azure DevOps
+2. **Create Variable Group** named `terraform-variables` with:
+   - `azureServiceConnection`: Service connection name
+   - `terraformBackendResourceGroup`: Resource group for state storage
+   - `terraformBackendStorageAccount`: Storage account for state
+   - `terraformBackendContainer`: Container name (e.g., `tfstate`)
+   - `keyVaultName`: Key Vault name (optional)
+3. **Create Terraform Backend Storage** (see `backend.tf.example`)
+4. **Import Pipeline** from `azure-pipelines.yml`
+
+### Pipeline Stages
+
+1. **Validate**: Terraform init, validate, and format check
+2. **Plan**: Create execution plan and publish as artifact
+3. **Apply**: Apply changes (main branch only, requires approval)
+
 ## Next Steps
 
 - Deploy your web application to IIS
@@ -243,6 +316,6 @@ terraform destroy
 - Configure Azure SQL Database backups
 - Set up monitoring and alerts
 - Implement Azure Backup for VMs
-- Configure auto-scaling for VMs
-- Set up Azure DevOps CI/CD pipelines
-- Implement Azure Key Vault for secrets management
+- Configure additional autoscaling metrics (memory, network, etc.)
+- Set up additional Key Vault secrets for application configuration
+- Implement Azure DevOps release pipelines for application deployment

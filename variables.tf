@@ -70,6 +70,40 @@ variable "autoscale_scale_in_cpu_threshold" {
   default     = 25
 }
 
+variable "use_key_vault" {
+  description = "Use Azure Key Vault for secrets management"
+  type        = bool
+  default     = true
+}
+
+variable "key_vault_sku" {
+  description = "SKU for Azure Key Vault (standard or premium)"
+  type        = string
+  default     = "standard"
+}
+
+variable "key_vault_purge_protection" {
+  description = "Enable purge protection for Azure Key Vault"
+  type        = bool
+  default     = false
+}
+
+variable "key_vault_network_acls_default_action" {
+  description = "Default action for Key Vault network ACLs (Allow or Deny)"
+  type        = string
+  default     = "Allow"
+  validation {
+    condition     = contains(["Allow", "Deny"], var.key_vault_network_acls_default_action)
+    error_message = "key_vault_network_acls_default_action must be either 'Allow' or 'Deny'."
+  }
+}
+
+variable "key_vault_allowed_ip_ranges" {
+  description = "List of allowed IP ranges for Key Vault access"
+  type        = list(string)
+  default     = []
+}
+
 variable "vm_size" {
   description = "Size of the VMs"
   type        = string

@@ -188,7 +188,7 @@ resource "azurerm_windows_virtual_machine_scale_set" "main" {
   sku                 = var.vm_size
   instances           = var.autoscale_default_instances
   admin_username      = var.admin_username
-  admin_password      = var.admin_password
+  admin_password      = var.use_key_vault ? azurerm_key_vault_secret.vm_admin_password.value : var.admin_password
 
   source_image_reference {
     publisher = "MicrosoftWindowsServer"
@@ -320,6 +320,95 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
   tags = var.tags
 }
 
+# Azure Key Vault
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_key_vault" "main" {
+  name                       = "${var.prefix}-kv-${substr(md5(azurerm_resource_group.main.location), 0, 8)}"
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = var.key_vault_sku
+  soft_delete_retention_days = 7
+  purge_protection_enabled   = var.key_vault_purge_protection
+
+  # Network ACLs - Allow access from VNet and Azure services
+  # Note: Initially set to Allow for setup, then restrict to VNet for production
+  network_acls {
+    default_action             = var.key_vault_network_acls_default_action
+    bypass                     = "AzureServices"
+    virtual_network_subnet_ids = var.key_vault_network_acls_default_action == "Allow" ? [] : [azurerm_subnet.main.id]
+    ip_rules                   = var.key_vault_allowed_ip_ranges
+  }
+
+  # Access policy for current user/service principal
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+
+    secret_permissions = [
+      "Get",
+      "List",
+      "Set",
+      "Delete",
+      "Recover",
+      "Backup",
+      "Restore"
+    ]
+
+    key_permissions = [
+      "Get",
+      "List"
+    ]
+  }
+
+  tags = var.tags
+}
+
+# Store VM Admin Password in Key Vault
+resource "azurerm_key_vault_secret" "vm_admin_password" {
+  name         = "vm-admin-password"
+  value        = var.admin_password
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_key_vault.main]
+
+  tags = var.tags
+}
+
+# Store SQL Admin Password in Key Vault
+resource "azurerm_key_vault_secret" "sql_admin_password" {
+  name         = "sql-admin-password"
+  value        = var.sql_admin_password
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_key_vault.main]
+
+  tags = var.tags
+}
+
+# Store SQL Admin Username in Key Vault (optional, for reference)
+resource "azurerm_key_vault_secret" "sql_admin_username" {
+  name         = "sql-admin-username"
+  value        = var.sql_admin_username
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_key_vault.main]
+
+  tags = var.tags
+}
+
+# Store VM Admin Username in Key Vault (optional, for reference)
+resource "azurerm_key_vault_secret" "vm_admin_username" {
+  name         = "vm-admin-username"
+  value        = var.admin_username
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_key_vault.main]
+
+  tags = var.tags
+}
+
 # Azure SQL Database Server
 resource "azurerm_mssql_server" "main" {
   name                         = "${var.prefix}-sql-server-${substr(md5(azurerm_resource_group.main.location), 0, 8)}"
@@ -327,7 +416,7 @@ resource "azurerm_mssql_server" "main" {
   location                     = azurerm_resource_group.main.location
   version                      = var.sql_server_version
   administrator_login          = var.sql_admin_username
-  administrator_login_password = var.sql_admin_password
+  administrator_login_password = var.use_key_vault ? azurerm_key_vault_secret.sql_admin_password.value : var.sql_admin_password
   minimum_tls_version          = "1.2"
 
   tags = var.tags

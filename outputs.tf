@@ -43,6 +43,21 @@ output "autoscaling_max_instances" {
   value       = var.autoscale_max_instances
 }
 
+output "key_vault_id" {
+  description = "ID of the Azure Key Vault"
+  value       = azurerm_key_vault.main.id
+}
+
+output "key_vault_name" {
+  description = "Name of the Azure Key Vault"
+  value       = azurerm_key_vault.main.name
+}
+
+output "key_vault_uri" {
+  description = "URI of the Azure Key Vault"
+  value       = azurerm_key_vault.main.vault_uri
+}
+
 output "sql_server_fqdn" {
   description = "Fully qualified domain name of the Azure SQL Server"
   value       = azurerm_mssql_server.main.fully_qualified_domain_name
