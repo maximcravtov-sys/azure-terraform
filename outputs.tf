@@ -67,11 +67,12 @@ output "web_app_url" {
 output "rdp_connection_info" {
   description = "RDP connection information for VM Scale Set"
   value = {
-    vmss_name    = azurerm_windows_virtual_machine_scale_set.main.name
-    public_ip    = azurerm_public_ip.lb.ip_address
-    username     = var.admin_username
-    note         = "Use Azure Bastion or VPN to connect via RDP. Connect to individual instances through the load balancer."
-    autoscaling  = var.autoscale_enabled ? "Enabled (${var.autoscale_min_instances}-${var.autoscale_max_instances} instances)" : "Disabled"
+    vmss_name   = azurerm_windows_virtual_machine_scale_set.main.name
+    public_ip   = azurerm_public_ip.lb.ip_address
+    username    = var.admin_username
+    note        = "Use Azure Bastion or VPN to connect via RDP. Connect to individual instances through the load balancer."
+    autoscaling = var.autoscale_enabled ? "Enabled (${var.autoscale_min_instances}-${var.autoscale_max_instances} instances)" : "Disabled"
   }
+  sensitive = true
 }
 

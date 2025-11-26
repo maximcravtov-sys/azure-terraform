@@ -70,6 +70,48 @@ variable "autoscale_scale_in_cpu_threshold" {
   default     = 25
 }
 
+variable "autoscale_scale_out_step" {
+  description = "Number of instances to add when scaling out"
+  type        = number
+  default     = 1
+}
+
+variable "autoscale_scale_in_step" {
+  description = "Number of instances to remove when scaling in"
+  type        = number
+  default     = 1
+}
+
+variable "autoscale_scale_out_cooldown" {
+  description = "Cooldown period after a scale-out event (ISO 8601 duration)"
+  type        = string
+  default     = "PT5M"
+}
+
+variable "autoscale_scale_in_cooldown" {
+  description = "Cooldown period after a scale-in event (ISO 8601 duration)"
+  type        = string
+  default     = "PT5M"
+}
+
+variable "autoscale_metric_time_grain" {
+  description = "Granularity for collecting autoscale metrics (ISO 8601 duration)"
+  type        = string
+  default     = "PT1M"
+}
+
+variable "autoscale_metric_time_window" {
+  description = "Observation window for autoscale metrics (ISO 8601 duration)"
+  type        = string
+  default     = "PT5M"
+}
+
+variable "autoscale_notification_emails" {
+  description = "Email recipients to notify when autoscale actions occur"
+  type        = list(string)
+  default     = []
+}
+
 variable "vm_size" {
   description = "Size of the VMs"
   type        = string

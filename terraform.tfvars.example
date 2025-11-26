@@ -17,6 +17,13 @@ autoscale_max_instances        = 10
 autoscale_default_instances    = 2
 autoscale_scale_out_cpu_threshold = 75  # Scale out when CPU > 75%
 autoscale_scale_in_cpu_threshold  = 25  # Scale in when CPU < 25%
+autoscale_scale_out_step          = 1   # Add 1 instance per scale-out event
+autoscale_scale_in_step           = 1   # Remove 1 instance per scale-in event
+autoscale_scale_out_cooldown      = "PT5M"
+autoscale_scale_in_cooldown       = "PT5M"
+autoscale_metric_time_grain       = "PT1M"
+autoscale_metric_time_window      = "PT5M"
+autoscale_notification_emails     = ["alerts@example.com"]
 
 # Windows Server SKU options:
 # - 2022-Datacenter

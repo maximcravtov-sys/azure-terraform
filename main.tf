@@ -1,6 +1,6 @@
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -271,9 +271,9 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
       metric_trigger {
         metric_name        = "Percentage CPU"
         metric_resource_id = azurerm_windows_virtual_machine_scale_set.main.id
-        time_grain         = "PT1M"
+        time_grain         = var.autoscale_metric_time_grain
         statistic          = "Average"
-        time_window        = "PT5M"
+        time_window        = var.autoscale_metric_time_window
         time_aggregation   = "Average"
         operator           = "GreaterThan"
         threshold          = var.autoscale_scale_out_cpu_threshold
@@ -282,8 +282,8 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
       scale_action {
         direction = "Increase"
         type      = "ChangeCount"
-        value     = "1"
-        cooldown  = "PT5M"
+        value     = tostring(var.autoscale_scale_out_step)
+        cooldown  = var.autoscale_scale_out_cooldown
       }
     }
 
@@ -292,9 +292,9 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
       metric_trigger {
         metric_name        = "Percentage CPU"
         metric_resource_id = azurerm_windows_virtual_machine_scale_set.main.id
-        time_grain         = "PT1M"
+        time_grain         = var.autoscale_metric_time_grain
         statistic          = "Average"
-        time_window        = "PT5M"
+        time_window        = var.autoscale_metric_time_window
         time_aggregation   = "Average"
         operator           = "LessThan"
         threshold          = var.autoscale_scale_in_cpu_threshold
@@ -303,17 +303,17 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
       scale_action {
         direction = "Decrease"
         type      = "ChangeCount"
-        value     = "1"
-        cooldown  = "PT5M"
+        value     = tostring(var.autoscale_scale_in_step)
+        cooldown  = var.autoscale_scale_in_cooldown
       }
     }
   }
 
   notification {
     email {
-      send_to_subscription_administrator    = false
-      send_to_subscription_co_administrators = false
-      custom_emails                         = []
+      send_to_subscription_administrator     = false
+      send_to_subscription_co_administrator = false
+      custom_emails                          = var.autoscale_notification_emails
     }
   }
 

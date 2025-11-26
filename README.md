@@ -1,11 +1,11 @@
 # Azure IIS Web Servers with Azure SQL Database and Load Balancer - Terraform
 
 This Terraform project provisions a highly available web infrastructure on Azure with:
-- Multiple Windows VMs running IIS (Internet Information Services)
+- Windows Virtual Machine Scale Set running IIS (Internet Information Services)
 - Azure SQL Database (cloud-managed SQL)
 - Azure Load Balancer in front of the VMs for web traffic
 - Network security group with appropriate rules
-- Availability Set for high availability
+- Azure Monitor Autoscale rules for elastic capacity
 
 ## Architecture
 
@@ -15,13 +15,8 @@ Internet
    v
 [Load Balancer] (Public IP)
    |
-   +---> [VM 1] (IIS Web Server)
-   |         |
-   |         +---> [Azure SQL Database]
-   |
-   +---> [VM 2] (IIS Web Server)
-           |
-           +---> [Azure SQL Database]
+   v
+[VM Scale Set - IIS]  <---->  [Azure SQL Database]
 ```
 
 ## Prerequisites
@@ -50,7 +45,7 @@ Internet
 3. **Edit `terraform.tfvars`** with your values:
    - Set `admin_username` and `admin_password` for VMs
    - Set `sql_admin_username` and `sql_admin_password` for Azure SQL Database
-   - Adjust `location`, `vm_count`, `vm_size` as needed
+   - Adjust `location`, `vm_size`, and autoscale parameters as needed
    - Configure SQL Database SKU and settings
 
 4. **Initialize Terraform**
@@ -84,8 +79,21 @@ Internet
 | `prefix` | Prefix for resource names | `iis` |
 | `vnet_address_space` | VNet address space | `10.0.0.0/16` |
 | `subnet_address_prefix` | Subnet address prefix | `10.0.1.0/24` |
-| `vm_count` | Number of VMs | `2` |
+| `vm_count` | Initial number of VMs (deprecated, prefer autoscale defaults) | `2` |
 | `vm_size` | VM size | `Standard_DS2_v2` |
+| `autoscale_enabled` | Toggle Azure Monitor autoscale | `true` |
+| `autoscale_min_instances` | Minimum VMSS instances | `2` |
+| `autoscale_max_instances` | Maximum VMSS instances | `10` |
+| `autoscale_default_instances` | Starting VMSS capacity | `2` |
+| `autoscale_scale_out_cpu_threshold` | CPU % that triggers scale-out | `75` |
+| `autoscale_scale_in_cpu_threshold` | CPU % that triggers scale-in | `25` |
+| `autoscale_scale_out_step` | Instances added per scale-out event | `1` |
+| `autoscale_scale_in_step` | Instances removed per scale-in event | `1` |
+| `autoscale_scale_out_cooldown` | Cooldown after scale-out (ISO 8601) | `PT5M` |
+| `autoscale_scale_in_cooldown` | Cooldown after scale-in (ISO 8601) | `PT5M` |
+| `autoscale_metric_time_grain` | Metric granularity (ISO 8601) | `PT1M` |
+| `autoscale_metric_time_window` | Metric window (ISO 8601) | `PT5M` |
+| `autoscale_notification_emails` | Emails notified on scale actions | `[]` |
 | `windows_server_sku` | Windows Server SKU | `2022-Datacenter` |
 | `admin_username` | VM admin username | *required* |
 | `admin_password` | VM admin password | *required* |
@@ -179,10 +187,17 @@ The Network Security Group allows:
 
 ## High Availability
 
-- VMs are placed in an Availability Set (2 fault domains, 2 update domains)
-- Load Balancer distributes HTTP/HTTPS traffic across healthy VMs
+- IIS instances run in an Azure Virtual Machine Scale Set with multiple fault/update domains
+- Load Balancer distributes HTTP/HTTPS traffic across healthy instances
 - Health probe monitors HTTP port 80
 - Azure SQL Database provides built-in high availability (depending on SKU)
+
+## Autoscaling
+
+- Autoscale uses Azure Monitor rules tied to VMSS CPU percentage.
+- Configure thresholds, steps, cooldowns, and metric windows via the autoscale variables.
+- Notifications can be sent to any list of email addresses by populating `autoscale_notification_emails`.
+- Disable autoscale by setting `autoscale_enabled = false`; VMSS will then stick to `autoscale_default_instances`.
 
 ## IIS Features Installed
 
