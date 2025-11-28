@@ -4,26 +4,22 @@ resource_group_name = "rg-iis-sql-lb"
 location            = "East US"
 prefix              = "iis"
 
-vnet_address_space     = "10.0.0.0/16"
-subnet_address_prefix  = "10.0.1.0/24"
-
-vm_count = 2  # Deprecated - use autoscaling variables instead
+vnet_address_space    = "10.0.0.0/16"
+subnet_address_prefix = "10.0.1.0/24"
+vmss_enable_public_ip        = true
+vmss_public_ip_prefix_length = 30  # /30 = 4 IPs
+vm_count = 2 # Deprecated - use autoscaling variables instead
 vm_size  = "Standard_DS2_v2"
 
-# Public IP Configuration for VM Scale Set instances
-# Set vmss_enable_public_ip = true to assign public IPs to each VM instance
-vmss_enable_public_ip        = false  # Set to true to enable public IPs
-vmss_public_ip_prefix_length = 30     # /30 = 4 IPs, /28 = 16 IPs, /24 = 256 IPs
-
 # Autoscaling Configuration
-autoscale_enabled              = true
-autoscale_min_instances        = 2
-autoscale_max_instances        = 10
-autoscale_default_instances    = 2
-autoscale_scale_out_cpu_threshold = 75  # Scale out when CPU > 75%
-autoscale_scale_in_cpu_threshold  = 25  # Scale in when CPU < 25%
-autoscale_scale_out_step          = 1   # Add 1 instance per scale-out event
-autoscale_scale_in_step           = 1   # Remove 1 instance per scale-in event
+autoscale_enabled                 = true
+autoscale_min_instances           = 2
+autoscale_max_instances           = 10
+autoscale_default_instances       = 2
+autoscale_scale_out_cpu_threshold = 75 # Scale out when CPU > 75%
+autoscale_scale_in_cpu_threshold  = 25 # Scale in when CPU < 25%
+autoscale_scale_out_step          = 1  # Add 1 instance per scale-out event
+autoscale_scale_in_step           = 1  # Remove 1 instance per scale-in event
 autoscale_scale_out_cooldown      = "PT5M"
 autoscale_scale_in_cooldown       = "PT5M"
 autoscale_metric_time_grain       = "PT1M"
@@ -45,9 +41,9 @@ sql_admin_username = "sqladmin"
 sql_admin_password = "YourSecureSQLPassword123!"
 
 # Azure SQL Database configuration
-sql_database_name = "appdb"
-sql_database_sku  = "S0"  # Options: S0, S1, S2, S3, P1, P2, P4, GP_Gen5_2, etc.
-sql_database_max_size_gb = 2
+sql_database_name           = "appdb"
+sql_database_sku            = "S0" # Options: S0, S1, S2, S3, P1, P2, P4, GP_Gen5_2, etc.
+sql_database_max_size_gb    = 2
 sql_database_zone_redundant = false
 
 tags = {

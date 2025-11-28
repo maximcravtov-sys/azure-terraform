@@ -81,6 +81,8 @@ Internet
 | `subnet_address_prefix` | Subnet address prefix | `10.0.1.0/24` |
 | `vm_count` | Initial number of VMs (deprecated, prefer autoscale defaults) | `2` |
 | `vm_size` | VM size | `Standard_DS2_v2` |
+| `vmss_enable_public_ip` | Enable public IP addresses for VM Scale Set instances | `false` |
+| `vmss_public_ip_prefix_length` | Public IP prefix length (e.g., 30 for /30 = 4 IPs) | `30` |
 | `autoscale_enabled` | Toggle Azure Monitor autoscale | `true` |
 | `autoscale_min_instances` | Minimum VMSS instances | `2` |
 | `autoscale_max_instances` | Maximum VMSS instances | `10` |
@@ -155,18 +157,25 @@ For production, restrict firewall rules to specific IP addresses.
 
 ## Connecting to VMs via RDP
 
-The VMs are in a private subnet. To connect via RDP:
+The VMs are in a private subnet by default. To connect via RDP:
 
-1. **Option 1**: Use Azure Bastion (recommended for production)
+1. **Option 1**: Enable public IPs for VM Scale Set instances (easiest for development)
+   - Set `vmss_enable_public_ip = true` in `terraform.tfvars`
+   - Set `vmss_public_ip_prefix_length` to allocate enough IPs (e.g., 30 for 4 IPs, 28 for 16 IPs)
+   - Each VM instance will get its own public IP address
+   - Connect directly via RDP using the instance's public IP
+   - **Note**: Ensure NSG allows RDP (port 3389) from your IP address
+
+2. **Option 2**: Use Azure Bastion (recommended for production)
    - Create an Azure Bastion resource
    - Connect through Azure Portal
 
-2. **Option 2**: Create a VPN connection
+3. **Option 3**: Create a VPN connection
    - Set up Azure VPN Gateway
    - Connect from your local machine
 
-3. **Option 3**: Add a public IP to one VM temporarily (not recommended for production)
-   - Modify the configuration to add a public IP
+4. **Option 4**: Use Load Balancer NAT rules (for temporary access)
+   - Configure NAT rules on the load balancer for RDP
    - Use for troubleshooting only
 
 ## Network Security

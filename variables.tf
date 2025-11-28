@@ -118,6 +118,18 @@ variable "vm_size" {
   default     = "Standard_DS2_v2"
 }
 
+variable "vmss_enable_public_ip" {
+  description = "Enable public IP addresses for VM Scale Set instances"
+  type        = bool
+  default     = false
+}
+
+variable "vmss_public_ip_prefix_length" {
+  description = "Prefix length for the Public IP Prefix (e.g., 30 for /30 = 4 IPs, 28 for /28 = 16 IPs)"
+  type        = number
+  default     = 30
+}
+
 variable "admin_username" {
   description = "Administrator username for the VMs"
   type        = string

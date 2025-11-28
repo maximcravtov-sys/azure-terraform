@@ -120,6 +120,19 @@ resource "azurerm_public_ip" "lb" {
   tags = var.tags
 }
 
+# Public IP Prefix for VM Scale Set instances
+resource "azurerm_public_ip_prefix" "vmss" {
+  count               = var.vmss_enable_public_ip ? 1 : 0
+  name                = "${var.prefix}-vmss-pip-prefix"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  prefix_length       = var.vmss_public_ip_prefix_length
+  sku                 = "Standard"
+  zones               = []
+
+  tags = var.tags
+}
+
 # Load Balancer
 resource "azurerm_lb" "main" {
   name                = "${var.prefix}-lb"
@@ -211,6 +224,16 @@ resource "azurerm_windows_virtual_machine_scale_set" "main" {
       primary                                = true
       subnet_id                              = azurerm_subnet.main.id
       load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.main.id]
+
+      # Public IP configuration for each VM instance
+      dynamic "public_ip_address" {
+        for_each = var.vmss_enable_public_ip ? [1] : []
+        content {
+          name                    = "${var.prefix}-vmss-pip"
+          public_ip_prefix_id     = azurerm_public_ip_prefix.vmss[0].id
+          idle_timeout_in_minutes = 4
+        }
+      }
     }
   }
 
@@ -311,9 +334,9 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
 
   notification {
     email {
-      send_to_subscription_administrator     = false
+      send_to_subscription_administrator    = false
       send_to_subscription_co_administrator = false
-      custom_emails                          = var.autoscale_notification_emails
+      custom_emails                         = var.autoscale_notification_emails
     }
   }
 
