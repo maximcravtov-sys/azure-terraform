@@ -118,6 +118,18 @@ variable "vm_size" {
   default     = "Standard_DS2_v2"
 }
 
+variable "vmss_enable_public_ip" {
+  description = "Enable public IP addresses for VM Scale Set instances"
+  type        = bool
+  default     = false
+}
+
+variable "vmss_public_ip_prefix_length" {
+  description = "Prefix length for the Public IP Prefix (e.g., 30 for /30 = 4 IPs, 28 for /28 = 16 IPs)"
+  type        = number
+  default     = 30
+}
+
 variable "admin_username" {
   description = "Administrator username for the VMs"
   type        = string
@@ -176,6 +188,24 @@ variable "sql_database_zone_redundant" {
   description = "Enable zone redundancy for Azure SQL Database"
   type        = bool
   default     = false
+}
+
+variable "enable_app_storage" {
+  description = "Enable Azure Files storage for application deployment"
+  type        = bool
+  default     = false
+}
+
+variable "app_storage_quota_gb" {
+  description = "Quota for Azure Files share in GB"
+  type        = number
+  default     = 100
+}
+
+variable "app_deployment_script_uris" {
+  description = "List of URIs to PowerShell deployment scripts (e.g., from blob storage)"
+  type        = list(string)
+  default     = null
 }
 
 variable "tags" {

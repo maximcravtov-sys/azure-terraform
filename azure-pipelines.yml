@@ -1,0 +1,173 @@
+# Azure DevOps Pipeline for VM Scale Set Deployment
+# This pipeline builds and deploys your application to the VM Scale Set
+
+trigger:
+  branches:
+    include:
+      - main
+      - master
+  paths:
+    exclude:
+      - README.md
+      - '*.md'
+      - terraform.tfstate
+      - terraform.tfstate.backup
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  - group: 'Azure-Infrastructure'  # Variable group with Azure connection details
+  - name: buildConfiguration
+    value: 'Release'
+  - name: terraformVersion
+    value: '1.6.0'
+
+stages:
+  - stage: Build
+    displayName: 'Build Application'
+    jobs:
+      - job: Build
+        displayName: 'Build and Package Application'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Use .NET SDK'
+            inputs:
+              packageType: 'sdk'
+              version: '8.x'
+            condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+            # Remove or modify this step if not using .NET
+
+          - task: NuGetCommand@2
+            displayName: 'Restore NuGet Packages'
+            inputs:
+              restoreSolution: '**/*.sln'
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            # Remove or modify this step if not using .NET
+
+          - task: VSBuild@1
+            displayName: 'Build Solution'
+            inputs:
+              solution: '**/*.sln'
+              msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:publishUrl=$(Build.ArtifactStagingDirectory)/app'
+              platform: '$(BuildPlatform)'
+              configuration: '$(buildConfiguration)'
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            # Remove or modify this step if not using .NET
+
+          - task: ArchiveFiles@2
+            displayName: 'Create Deployment Package'
+            inputs:
+              rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
+              replaceExistingArchive: true
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Build Artifacts'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Deploy
+    displayName: 'Deploy to Azure'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: DeployToVMSS
+        displayName: 'Deploy to VM Scale Set'
+        environment: 'Production'  # Create this environment in Azure DevOps
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Upload Application to Azure Files'
+                  inputs:
+                    azureSubscription: '$(AzureServiceConnection)'  # Service connection name
+                    scriptType: 'ps'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      Write-Host "Uploading application to Azure Files..."
+                      
+                      # Get storage account name from Terraform output or variable
+                      $storageAccountName = "$(StorageAccountName)"
+                      $fileShareName = "$(FileShareName)"
+                      
+                      # Upload application files
+                      az storage file upload-batch `
+                        --account-name $storageAccountName `
+                        --share-name $fileShareName `
+                        --source "$(Pipeline.Workspace)/drop/app" `
+                        --destination "app" `
+                        --auth-mode login
+                      
+                      Write-Host "Application uploaded successfully!"
+                      
+                      # Optional: Restart IIS on all VM instances
+                      Write-Host "Restarting IIS on VM instances..."
+                      $resourceGroup = "$(ResourceGroupName)"
+                      $vmssName = "$(VMSSName)"
+                      
+                      # Get all VM instances
+                      $instances = az vmss list-instances `
+                        --resource-group $resourceGroup `
+                        --name $vmssName `
+                        --query "[].instanceId" `
+                        -o tsv
+                      
+                      foreach ($instanceId in $instances) {
+                        Write-Host "Restarting IIS on instance $instanceId..."
+                        az vmss run-command invoke `
+                          --resource-group $resourceGroup `
+                          --name $vmssName `
+                          --instance-id $instanceId `
+                          --command-id RunPowerShellScript `
+                          --scripts "iisreset" `
+                          --query "value[0].message" `
+                          -o tsv
+                      }
+
+                - task: AzureCLI@2
+                  displayName: 'Verify Deployment'
+                  inputs:
+                    azureSubscription: '$(AzureServiceConnection)'
+                    scriptType: 'ps'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      Write-Host "Verifying deployment..."
+                      
+                      $loadBalancerIP = "$(LoadBalancerIP)"
+                      $url = "http://$loadBalancerIP"
+                      
+                      Write-Host "Testing application at: $url"
+                      
+                      try {
+                        $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30
+                        if ($response.StatusCode -eq 200) {
+                          Write-Host "✅ Application is responding successfully!" -ForegroundColor Green
+                        } else {
+                          Write-Host "⚠️ Application returned status code: $($response.StatusCode)" -ForegroundColor Yellow
+                        }
+                      } catch {
+                        Write-Host "❌ Application verification failed: $_" -ForegroundColor Red
+                        exit 1
+                      }
+
+                - task: PublishTestResults@2
+                  displayName: 'Publish Test Results'
+                  inputs:
+                    testResultsFormat: 'JUnit'
+                    testResultsFiles: '**/test-results.xml'
+                    failTaskOnFailedTests: false
+                  condition: always()
+
+                - task: PublishPipelineArtifact@1
+                  displayName: 'Publish Deployment Artifact'
+                  inputs:
+                    targetPath: '$(Pipeline.Workspace)/drop'
+                    artifact: 'deployment'
+                    publishLocation: 'pipeline'
+

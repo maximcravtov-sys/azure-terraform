@@ -1,0 +1,150 @@
+# Azure DevOps Pipeline with Terraform Infrastructure as Code
+# This pipeline manages infrastructure AND deploys applications
+
+trigger:
+  branches:
+    include:
+      - main
+      - master
+  paths:
+    include:
+      - '*.tf'
+      - '*.tfvars'
+      - 'terraform/**'
+
+pool:
+  vmImage: 'ubuntu-latest'  # Terraform works better on Linux agents
+
+variables:
+  - group: 'Azure-Infrastructure'
+  - name: terraformVersion
+    value: '1.6.0'
+
+stages:
+  - stage: TerraformPlan
+    displayName: 'Terraform Plan'
+    jobs:
+      - job: Plan
+        displayName: 'Generate Terraform Plan'
+        steps:
+          - task: TerraformInstaller@1
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: '$(terraformVersion)'
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: '$(AzureServiceConnection)'
+              backendAzureRmResourceGroupName: '$(TerraformStateResourceGroup)'
+              backendAzureRmStorageAccountName: '$(TerraformStateStorageAccount)'
+              backendAzureRmContainerName: 'terraform-state'
+              backendAzureRmKey: 'terraform.tfstate'
+
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform Plan'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              environmentServiceNameAzureRM: '$(AzureServiceConnection)'
+              commandOptions: '-out=tfplan'
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Terraform Plan'
+            inputs:
+              targetPath: '$(System.DefaultWorkingDirectory)'
+              artifact: 'terraform-plan'
+              publishLocation: 'pipeline'
+
+  - stage: TerraformApply
+    displayName: 'Terraform Apply'
+    dependsOn: TerraformPlan
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Apply
+        displayName: 'Apply Terraform Changes'
+        environment: 'Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  displayName: 'Install Terraform'
+                  inputs:
+                    terraformVersion: '$(terraformVersion)'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Terraform Init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    backendServiceArm: '$(AzureServiceConnection)'
+                    backendAzureRmResourceGroupName: '$(TerraformStateResourceGroup)'
+                    backendAzureRmStorageAccountName: '$(TerraformStateStorageAccount)'
+                    backendAzureRmContainerName: 'terraform-state'
+                    backendAzureRmKey: 'terraform.tfstate'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'Terraform Apply'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    environmentServiceNameAzureRM: '$(AzureServiceConnection)'
+                    commandOptions: '-auto-approve'
+
+                - task: AzureCLI@2
+                  displayName: 'Get Terraform Outputs'
+                  inputs:
+                    azureSubscription: '$(AzureServiceConnection)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      # Install Terraform if not available
+                      if ! command -v terraform &> /dev/null; then
+                        wget https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+                        unzip terraform_$(terraformVersion)_linux_amd64.zip
+                        sudo mv terraform /usr/local/bin/
+                      fi
+                      
+                      # Get outputs and set as pipeline variables
+                      terraform output -json > terraform-outputs.json
+                      cat terraform-outputs.json
+                      
+                      # Extract values (example)
+                      STORAGE_ACCOUNT=$(terraform output -raw app_storage_account_name 2>/dev/null || echo "")
+                      echo "##vso[task.setvariable variable=StorageAccountName]$STORAGE_ACCOUNT"
+
+  - stage: DeployApplication
+    displayName: 'Deploy Application'
+    dependsOn: TerraformApply
+    condition: succeeded()
+    jobs:
+      - job: Deploy
+        displayName: 'Deploy Application Files'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Upload Application to Azure Files'
+            inputs:
+              azureSubscription: '$(AzureServiceConnection)'
+              scriptType: 'ps'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Write-Host "Uploading application to Azure Files..."
+                
+                $storageAccountName = "$(StorageAccountName)"
+                $fileShareName = "appfiles"
+                
+                # Check if we have application files from build stage
+                if (Test-Path "$(Pipeline.Workspace)/drop/app") {
+                  az storage file upload-batch `
+                    --account-name $storageAccountName `
+                    --share-name $fileShareName `
+                    --source "$(Pipeline.Workspace)/drop/app" `
+                    --destination "app" `
+                    --auth-mode login
+                } else {
+                  Write-Host "No application files found. Skipping upload."
+                }
+

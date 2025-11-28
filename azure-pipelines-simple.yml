@@ -1,0 +1,121 @@
+# Simple Azure DevOps Pipeline - Just Deploy Files
+# Use this if you already have built artifacts or static files
+
+trigger:
+  branches:
+    include:
+      - main
+      - master
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  - group: 'Azure-Infrastructure'
+
+stages:
+  - stage: Deploy
+    displayName: 'Deploy to VM Scale Set'
+    jobs:
+      - deployment: DeployFiles
+        displayName: 'Deploy Application Files'
+        environment: 'Production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: AzureCLI@2
+                  displayName: 'Upload Files to Azure Files'
+                  inputs:
+                    azureSubscription: '$(AzureServiceConnection)'
+                    scriptType: 'ps'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      Write-Host "Starting deployment..."
+                      
+                      $storageAccountName = "$(StorageAccountName)"
+                      $fileShareName = "$(FileShareName)"
+                      $sourcePath = "$(Build.SourcesDirectory)"
+                      
+                      # Determine source folder (adjust based on your project structure)
+                      $appFolder = if (Test-Path "$sourcePath\app") { "$sourcePath\app" } 
+                                   elseif (Test-Path "$sourcePath\dist") { "$sourcePath\dist" }
+                                   elseif (Test-Path "$sourcePath\wwwroot") { "$sourcePath\wwwroot" }
+                                   else { $sourcePath }
+                      
+                      Write-Host "Source folder: $appFolder"
+                      Write-Host "Storage account: $storageAccountName"
+                      Write-Host "File share: $fileShareName"
+                      
+                      # Upload files
+                      az storage file upload-batch `
+                        --account-name $storageAccountName `
+                        --share-name $fileShareName `
+                        --source $appFolder `
+                        --destination "app" `
+                        --auth-mode login `
+                        --overwrite
+                      
+                      Write-Host "✅ Files uploaded successfully!"
+
+                - task: AzureCLI@2
+                  displayName: 'Restart IIS on All Instances'
+                  inputs:
+                    azureSubscription: '$(AzureServiceConnection)'
+                    scriptType: 'ps'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      Write-Host "Restarting IIS on VM instances..."
+                      
+                      $resourceGroup = "$(ResourceGroupName)"
+                      $vmssName = "$(VMSSName)"
+                      
+                      # Get all instance IDs
+                      $instances = az vmss list-instances `
+                        --resource-group $resourceGroup `
+                        --name $vmssName `
+                        --query "[].instanceId" `
+                        -o tsv
+                      
+                      if ($instances) {
+                        foreach ($instanceId in $instances) {
+                          Write-Host "Restarting IIS on instance $instanceId..."
+                          az vmss run-command invoke `
+                            --resource-group $resourceGroup `
+                            --name $vmssName `
+                            --instance-id $instanceId `
+                            --command-id RunPowerShellScript `
+                            --scripts "iisreset" `
+                            --query "value[0].message" `
+                            -o tsv
+                        }
+                        Write-Host "✅ IIS restarted on all instances"
+                      } else {
+                        Write-Host "⚠️ No VM instances found"
+                      }
+
+                - task: AzureCLI@2
+                  displayName: 'Verify Deployment'
+                  inputs:
+                    azureSubscription: '$(AzureServiceConnection)'
+                    scriptType: 'ps'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      $loadBalancerIP = "$(LoadBalancerIP)"
+                      $url = "http://$loadBalancerIP"
+                      
+                      Write-Host "Verifying application at: $url"
+                      
+                      Start-Sleep -Seconds 10  # Wait for IIS to restart
+                      
+                      try {
+                        $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 30
+                        Write-Host "✅ Application is responding! Status: $($response.StatusCode)" -ForegroundColor Green
+                        Write-Host "Response length: $($response.Content.Length) bytes"
+                      } catch {
+                        Write-Host "⚠️ Verification failed: $_" -ForegroundColor Yellow
+                        Write-Host "This might be normal if the application is still starting up."
+                      }
+

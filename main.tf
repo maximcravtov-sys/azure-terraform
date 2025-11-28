@@ -120,6 +120,19 @@ resource "azurerm_public_ip" "lb" {
   tags = var.tags
 }
 
+# Public IP Prefix for VM Scale Set instances
+resource "azurerm_public_ip_prefix" "vmss" {
+  count               = var.vmss_enable_public_ip ? 1 : 0
+  name                = "${var.prefix}-vmss-pip-prefix"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  prefix_length       = var.vmss_public_ip_prefix_length
+  sku                 = "Standard"
+  zones               = []
+
+  tags = var.tags
+}
+
 # Load Balancer
 resource "azurerm_lb" "main" {
   name                = "${var.prefix}-lb"
@@ -211,6 +224,16 @@ resource "azurerm_windows_virtual_machine_scale_set" "main" {
       primary                                = true
       subnet_id                              = azurerm_subnet.main.id
       load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.main.id]
+
+      # Public IP configuration for each VM instance
+      dynamic "public_ip_address" {
+        for_each = var.vmss_enable_public_ip ? [1] : []
+        content {
+          name                    = "${var.prefix}-vmss-pip"
+          public_ip_prefix_id     = azurerm_public_ip_prefix.vmss[0].id
+          idle_timeout_in_minutes = 4
+        }
+      }
     }
   }
 
@@ -246,6 +269,47 @@ resource "azurerm_windows_virtual_machine_scale_set" "main" {
   }
 
   tags = var.tags
+}
+
+# Azure Storage Account for Application Files
+resource "azurerm_storage_account" "app_files" {
+  count                    = var.enable_app_storage ? 1 : 0
+  name                     = "${var.prefix}appfiles${substr(md5(azurerm_resource_group.main.location), 0, 8)}"
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+
+  tags = var.tags
+}
+
+# Azure File Share for Application Files
+resource "azurerm_storage_share" "app_files" {
+  count            = var.enable_app_storage ? 1 : 0
+  name             = "appfiles"
+  storage_account_name = azurerm_storage_account.app_files[0].name
+  quota            = var.app_storage_quota_gb
+}
+
+# Custom Script Extension to Mount Azure Files and Deploy Application
+resource "azurerm_virtual_machine_scale_set_extension" "app_deployment" {
+  count                        = var.enable_app_storage ? 1 : 0
+  name                         = "${var.prefix}-app-deployment"
+  virtual_machine_scale_set_id  = azurerm_windows_virtual_machine_scale_set.main.id
+  publisher                    = "Microsoft.Compute"
+  type                         = "CustomScriptExtension"
+  type_handler_version         = "1.10"
+  auto_upgrade_minor_version   = true
+
+  settings = jsonencode({
+    commandToExecute = "powershell -ExecutionPolicy Unrestricted -Command \"$storageAccountName='${azurerm_storage_account.app_files[0].name}'; $storageAccountKey='${azurerm_storage_account.app_files[0].primary_access_key}'; $fileShareName='${azurerm_storage_share.app_files[0].name}'; $driveLetter='Z'; $iisPath='C:\\inetpub\\wwwroot'; $secureKey = ConvertTo-SecureString -String $storageAccountKey -AsPlainText -Force; $credential = New-Object System.Management.Automation.PSCredential('Azure\\$storageAccountName', $secureKey); $uncPath = '\\\\$storageAccountName.file.core.windows.net\\$fileShareName'; if (Get-PSDrive -Name $driveLetter -ErrorAction SilentlyContinue) { net use '${driveLetter}:' /delete /y }; New-PSDrive -Name $driveLetter -PSProvider FileSystem -Root $uncPath -Credential $credential -Persist; if (-not (Test-Path '${driveLetter}:\\app')) { New-Item -Path '${driveLetter}:\\app' -ItemType Directory -Force | Out-Null }; if ((Get-ChildItem $iisPath -Force -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0) { Move-Item -Path $iisPath -Destination \"$iisPath.backup.$(Get-Date -Format 'yyyyMMddHHmmss')\" -Force }; New-Item -Path $iisPath -ItemType Directory -Force | Out-Null; cmd /c mklink /J \"$iisPath\\app\" \"${driveLetter}:\\app\"; Write-Host 'Azure Files mounted and linked to IIS successfully'\""
+  })
+
+  depends_on = [
+    azurerm_storage_share.app_files,
+    azurerm_windows_virtual_machine_scale_set.main
+  ]
 }
 
 # Autoscaling Settings
@@ -311,9 +375,9 @@ resource "azurerm_monitor_autoscale_setting" "vmss" {
 
   notification {
     email {
-      send_to_subscription_administrator     = false
+      send_to_subscription_administrator    = false
       send_to_subscription_co_administrator = false
-      custom_emails                          = var.autoscale_notification_emails
+      custom_emails                         = var.autoscale_notification_emails
     }
   }
 

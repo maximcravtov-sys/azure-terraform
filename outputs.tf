@@ -76,3 +76,13 @@ output "rdp_connection_info" {
   sensitive = true
 }
 
+output "app_storage_account_name" {
+  description = "Name of the Azure Storage Account for application files (if enabled)"
+  value       = var.enable_app_storage ? azurerm_storage_account.app_files[0].name : null
+}
+
+output "app_storage_share_name" {
+  description = "Name of the Azure Files share for application deployment (if enabled)"
+  value       = var.enable_app_storage ? azurerm_storage_share.app_files[0].name : null
+}
+
